@@ -1,0 +1,507 @@
+#Before proceeding with assessing the quality of the current working data frames, 
+#several preliminary steps were necessary to successfully prepare the R workplace. 
+
+#Five key packages were installed (and subsequentially loaded into RStudio prior to beginning any analyses).
+#Specifically, “httr”, “jsonlite”, “dplyr”, “readr” and “readxl” where installed and used throughout the entirety
+#of this study. The Httr package makes http requests in R by providing a wrapper for the curl package.
+#The jsonlite package consists of a JSON/parser generator implementing bidirectional mapping between 
+#JSON data and R data. The dplyr package provides a set of grammar for working with data manipulation protocols.
+#The readr package provides a way to read rectangular data, such as .csv files, into the R studio software. 
+#Finally, the readxl package provides a way to read excel files into the working environment. 
+
+# Install necessary packages if not already installed
+if (!requireNamespace("httr", quietly = TRUE)) {
+  install.packages("httr")
+}
+if (!requireNamespace("jsonlite", quietly = TRUE)) {
+  install.packages("jsonlite")
+}
+if (!requireNamespace("ggplot2", quietly = TRUE)) {
+  install.packages("ggplot2")
+}
+if (!requireNamespace("readr", quietly = TRUE)) {
+  install.packages("readr")
+}
+if (!requireNamespace("dplyr", quietly = TRUE)) {
+  install.packages("dplyr")
+}
+if (!requireNamespace("readxl", quietly = TRUE)) {
+  install.packages("readxl")
+}
+if (!requireNamespace("reshape2", quietly = TRUE)) {
+  install.packages("reshape2")
+}
+if (!requireNamespace("ggrepel", quietly = TRUE)) {
+  install.packages("ggrepel")
+}
+if (!requireNamespace("sf", quietly = TRUE)) {
+  install.packages("sf")
+}
+if (!requireNamespace("rnaturalearth", quietly = TRUE)) {
+  install.packages("rnaturalearth")
+}
+if (!requireNamespace("rnaturalearthdata", quietly = TRUE)) {
+  install.packages("rnaturalearthdata")
+}
+if (!requireNamespace("devtools", quietly = TRUE)) {
+  install.packages("devtools")
+}
+devtools::install_github("ropensci/rnaturalearthhires")
+
+# Load packages
+library(readr)
+library(dplyr)
+library(readxl)
+library(httr)
+library(jsonlite)
+library(ggplot2)
+library(reshape2)
+library(ggrepel)
+
+# Set working directory
+setwd("/Users/alexboudreau/Desktop")
+
+#From here, the initial data frame (present as an excel file, hence the implementation of the “readxl” package) 
+#was imported into the working environment for initial analysis of data cleanliness and extent of workability.
+#Being that the file consisted of a poly-tabular excel file, the spreadsheets of interest 
+#(Acadian Peninsula sample data, Restigouche sample data, and Madawaska sample data) were isolated 
+#and split into separate mono-tabular excel files to then have all three new data frames be imported 
+#into the working environment.
+
+# Import files
+Penninsule <- read_csv("Pen.csv")
+Restigouche <- read_csv("Res.csv")
+Madawaska <- read_csv("Mad.csv")
+
+# Visualize data tables to assess working state
+summary(Penninsule)
+summary(Restigouche)
+summary(Madawaska)
+head(Penninsule)
+head(Restigouche)
+head(Madawaska)
+
+# Removal of non-essential columns in Penninsule dataframe
+Penninsule = subset(Penninsule, select = -c(1,3,4))
+
+# View column names to assess joining capacity
+colnames(Penninsule)
+colnames(Restigouche)
+colnames(Madawaska)
+
+# Removal of empty and/or incomplete rows
+Madawaska <- Madawaska[-(78:94),]
+Restigouche <- Restigouche [-(53:62),]
+Penninsule <- Penninsule[-c(2,10,17,22,39,42,56,62,65,66,69,76,77,82,86),]
+
+# Joining all three dataframes into one complete dataframe
+Results <- Madawaska %>%
+  full_join(Restigouche) %>%
+  full_join(Penninsule)
+
+# Viewing resultant dataframe
+summary(Results)
+colnames(Results)
+
+# Checking for duplicates in variable columns
+table(Results$Gene)
+table(Results$Base)
+table(Results$proteine)
+
+# Extract gene names and version numbers
+Results$Gene_Name <- gsub("\\s*\\(NM_[0-9]+\\.[0-9]+\\)", "", Results$Gene)
+Results$Version <- as.numeric(gsub(".*\\(NM_[0-9]+\\.([0-9]+)\\)", "\\1", Results$Gene))
+
+# Find the latest version for each gene
+latest_versions <- aggregate(Version ~ Gene_Name, data = Results, max)
+
+# Merge the latest version back to the original data frame
+Results_merged <- merge(Results, latest_versions, by = "Gene_Name", all.x = TRUE)
+
+# Replace older versions with the latest version
+Results_merged$Gene <- with(Results_merged, paste(Gene_Name, "(NM_000018.", Version.y, ")", sep = ""))
+
+# Remove unnecessary columns
+Results_cleaned <- Results_merged[, c("Gene")]
+
+# Print and verify the cleaned data frame
+print(Results_cleaned)
+table(Results_merged$Gene)
+
+write.csv(Results_merged, "~/Desktop/Results_merged.csv", row.names = FALSE)
+
+# Manual insertion of gnomAD results is done in the df Results_Merged at this point, as well as manual verification/modification of gene counts when neccesary for accuracy.
+# The second part of this script starts from the point where this data has been integrated into the df
+
+#Being that the goal of this study was to compare allelic frequencies of observed genetic mutations in
+#certain key Acadian populations, reference profiles of respective allelic frequencies needed to be 
+#outsourced to be able to proceed with statistical comparisons (Fischer’s exact testing, as 
+#discussed further in this section). Specifically, genomic data from the gnomAD database was 
+#obtained and filtered to integrate only data representing their “European non-Finnish” cohort.
+#Before proceeding with the rest of the data manipulation in R, this data was manually incorporated 
+#into the “Results” data frame. Additionally,Since every candidate possesses two distinct alleles for every gene tested, gene counts were normalized 
+# to create a new column named Normalized_Counts.By dividing the allele count of a gene by the total allelic count of the sample, the allelic frequency (AF) 
+#was able to be obtained for every gene in the data frame. The same principle was applied to obtain the 
+#heterozygote frequency (HF) for every gene in the data frame. These data manipulations where iterated over the entire file in Microsoft Excel under the following general framework :
+
+#Allele frequency  (Positive alleles)/(Total alleles)
+#Heterozygote frequency=  ((Positive alleles-2(Homozygotes)))/((0.5 x Total alleles))
+
+#Being that every gene in the data frame now had nonzero numeric values for the following categories 
+#: AF_Acadian, HF_Acadian, AF_gnomAD, HF_gnomAD, AF and HF ratios were obtained and imported in 
+#the working data frame.
+
+#AF ratio=  (AF_Acadian)/(AF_gnomAD)
+#hF ratio=  (HF_Acadian)/(HF_gnomAD)
+
+#Attached here is an R skeleton script showing the integration of such an analysis :
+
+     # Normalize counts
+     #twice_sum_of_counts <- 2 * sum(gene_counts)
+    #normalized_counts <- gene_counts / twice_sum_of_counts
+     #new_data <- data.frame(Gene = names(gene_counts), `AF acadian` = normalized_counts, stringsAsFactors = FALSE)
+
+     # Merge normalized counts with original data
+     #Results_Merged <- merge(Results_Merged, new_data, by = "Gene", all.x = TRUE)
+
+     # Calculate AF ratio and HF acadian
+     #Results_Merged$AF_ratio <- Results_Merged$AF.acadian.Freq / Results_Merged$Allele_frequency
+     #Results_Merged$HF_acadian <- Results_Merged$AF.acadian.Freq / 119
+
+    # Duplicate AF gnomAD NFE column and rename it to HF gnomAD NFE
+    #Results_Merged$HF_gnomAD_NFE <- Results_Merged$Allele_frequency
+
+    # Calculate HF ratio
+    #Results_Merged$HF_ratio <- Results_Merged$HF_acadian / Results_Merged$HF_gnomAD_NFE
+
+    # Calculate allele_count_acadian
+   #Results_Merged$allele_count_acadian <- Results_Merged$AF.acadian.Freq * 238
+
+    # Add a constant column "acadian_count"
+   #Results_Merged$acadian_count <- 360
+
+   # Initialize p-value column
+   #Results_Merged$pval <- NA
+
+   # Remove rows with NA values in Allele_count and Allele_number columns
+   #Results_Merged <- Results_Merged[complete.cases(Results_Merged[, c("Allele_count", "Allele.number")]), ]
+
+# Read the data from the Excel file
+file_path <- "/Users/alexboudreau/Desktop/Article/DATA_done_VERIFIED.xlsx"
+df <- read_excel(file_path, sheet = 1)
+
+# Clean the column names
+colnames(df) <- c("Index", "Gene", "Base", "Protein", "Allele_count_gnomAD", "Allele_number_gnomAD",
+                  "Number_of_homozygotes", "Allele_frequency_gnomAD", "Mode_of_transmission", 
+                  "Zygosity", "Associated_condition", "Frequency_Acadian", "Allele_Frequency")
+
+# Convert relevant columns to numeric, coercing any problematic values to NA
+df <- df %>%
+  mutate(
+    Frequency_Acadian = as.numeric(Frequency_Acadian),
+    Allele_count_gnomAD = as.numeric(Allele_count_gnomAD),
+    Allele_number_gnomAD = as.numeric(Allele_number_gnomAD),
+    Allele_Frequency = as.numeric(Allele_Frequency),
+    Allele_frequency_gnomAD = as.numeric(Allele_frequency_gnomAD)
+  )
+
+# Remove rows with NA values in relevant columns
+df <- df %>% filter(!is.na(Frequency_Acadian) & !is.na(Allele_count_gnomAD) & !is.na(Allele_number_gnomAD))
+
+#Being that the function called to perform the Fischer’s exact two-tailed test operates under a conditional
+#loop framework, a column in which the calculated p-values will  be able to be stored was created before 
+#running the Fischer testing script. Additionally, the complete.cases() function was called before running 
+#the Fischer testing script to remove any rows having incomplete data, as this would result in either a null
+#or NA p-value output from the Fischer test.
+#The matrix() and nrow() functions were used to create a matrix in which a conditional loop would run through 
+#every numerical value in the allele_count column and perform Fischer testing. In the event of a value being 
+#of the zero or negative format, it was to be skipped via the any() function and the conditional loop would 
+#continue along its designated matrix – the creation of this conditional loop and matrix before the calling 
+#of the associated Fischer testing function was imperative to the success of such testing.
+#The fischer.test() function was performed on every tested gene and its resultant p-value was sent to
+#the previously created p-value column in the working data frame. The p.adjust() function was subsequentially
+#called with the method = “bonferonni” and alpha = 0.05 conditional inserts to perform Bonferonni corrections 
+#on the resultant p-values. Finally, a column called Significant_Rows was created by filtering the p-values
+#based on the criteria of being inferior to 0.05. the print() function was once again called to visualize 
+#the genes in this study that possessed a significant p-value. The order() function was also called to sort 
+#the Gene column via it’s corresponding p-values. This complete data frame was then saved and exported as both
+#.xlx and .csv type files.
+
+#p = (((A+C)/A)((B+D)/B))/((N/(A+B)))=  (A+B)!(C+D)!(A+C)!(B+D)!/A!B!C!D!N!
+#α_adjusted =  α/n  
+
+# Function to perform one-tailed Fisher's exact test (alternative = "greater")
+fisher_test <- function(frequency_acadian, allele_count_gnomad, allele_number_gnomad) {
+  positive_acadian <- as.numeric(frequency_acadian)
+  negative_acadian <- 360 - as.numeric(frequency_acadian)
+  positive_gnomad <- as.numeric(allele_count_gnomad)
+  negative_gnomad <- as.numeric(allele_number_gnomad) - as.numeric(allele_count_gnomad)
+  
+  # Ensure all values are non-negative
+  if (positive_acadian < 0) positive_acadian <- 0
+  if (negative_acadian < 0) negative_acadian <- 0
+  if (positive_gnomad < 0) positive_gnomad <- 0
+  if (negative_gnomad < 0) negative_gnomad <- 0
+  
+  table <- matrix(c(positive_acadian, negative_acadian, positive_gnomad, negative_gnomad), nrow = 2)
+  test_result <- fisher.test(table, alternative = "greater")
+  return(test_result$p.value)
+}
+
+# Apply Fisher's test to each row
+df$p_value <- mapply(fisher_test, df$Frequency_Acadian, df$Allele_count_gnomAD, df$Allele_number_gnomAD)
+
+# Apply Bonferroni correction
+df$bonferroni_corrected_p <- p.adjust(df$p_value, method = "bonferroni")
+
+# Apply FDR correction
+df$fdr_corrected_p <- p.adjust(df$p_value, method = "BH")
+
+# Filter significant results for each type of p-value
+significant_fisher <- df %>% filter(p_value < 0.05)
+significant_bonferroni <- df %>% filter(bonferroni_corrected_p < 0.05)
+significant_fdr <- df %>% filter(fdr_corrected_p < 0.05)
+
+cartesian_plot_bonferroni <- ggplot(df, aes(x = Allele_Frequency, y = -log10(bonferroni_corrected_p))) +
+  geom_point(color = "black", alpha = 0.8, size = 2) +
+  geom_point(data = significant_bonferroni, aes(x = Allele_Frequency, y = -log10(bonferroni_corrected_p)), color = "red", size = 2) +
+  geom_text_repel(data = significant_bonferroni, aes(x = Allele_Frequency, y = -log10(bonferroni_corrected_p), label = Gene), 
+                  color = "red", size = 3, max.overlaps = 10) +
+  labs(title = "Significant Genes based on Bonferroni Corrected p-value",
+       x = "Allele Frequency",
+       y = "-log10(Bonferroni Corrected p-value)") +
+  theme_minimal() +
+  theme(
+    panel.grid.minor = element_blank(),
+    plot.title = element_text(hjust = 0.5, color = "black"),
+    plot.background = element_rect(fill = "white", color = "black"),
+    panel.background = element_rect(fill = "white", color = "black"),
+    axis.title = element_text(color = "black"),
+    axis.text = element_text(color = "black"),
+    axis.ticks = element_line(color = "black")
+  )
+
+# Print the improved Cartesian plot without log scale
+print(cartesian_plot_bonferroni)
+
+# Save the improved Cartesian plot as an image
+ggsave("cartesian_plot_bonferroni_no_log.png", cartesian_plot_bonferroni)
+
+# Filter out rows with Allele_frequency_gnomAD equal to 0 to avoid division by zero
+filtered_df <- df %>%
+  filter(Allele_frequency_gnomAD != 0)
+
+# Calculate the allele frequency ratio
+filtered_df <- filtered_df %>%
+  mutate(allele_frequency_ratio = Allele_Frequency / Allele_frequency_gnomAD)
+
+# Get the top 20 genes with the highest allele frequency ratios
+top_genes <- filtered_df %>%
+  arrange(desc(allele_frequency_ratio)) %>%
+  head(20)
+
+plot_top_genes <- ggplot(top_genes, aes(x = reorder(Gene, -allele_frequency_ratio), y = allele_frequency_ratio, fill = allele_frequency_ratio)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  scale_fill_gradient(low = "grey80", high = "black") +
+  labs(title = "Top 20 Allele Frequency Ratios (Allele Frequency / Allele Frequency gnomAD)",
+       x = "Gene",
+       y = "Allele Frequency Ratio") +
+  theme_minimal() +
+  theme(
+    legend.position = "none", # Remove legend
+    axis.title.y = element_blank(), # Remove y-axis title
+    plot.margin = margin(0.5, 0.5, 0.5, 0.5, "cm"), # Add plot margin
+    plot.title = element_text(hjust = 0.5, color = "black"), # Center and darken title
+    axis.title.x = element_text(color = "black"), # Darken x-axis title
+    axis.text = element_text(color = "black"), # Darken axis text
+    panel.grid.minor = element_blank(), # Remove minor grid
+    plot.background = element_rect(fill = "white", color = "black"), # Background settings
+    panel.background = element_rect(fill = "white", color = "black") # Panel settings
+  )
+
+# Print the top 20 genes plot
+print(plot_top_genes)
+
+# Save the plot as an image
+ggsave("top_20_allele_frequency_ratio_plot.png", plot_top_genes)
+
+# Print the data with allele frequency ratios
+print("Top 20 data with allele frequency ratios:")
+print(top_genes)
+
+
+# Calculate statistics for allele frequency ratios
+allele_freq_stats <- filtered_df %>%
+  summarise(
+    mean_ratio = mean(allele_frequency_ratio, na.rm = TRUE),
+    median_ratio = median(allele_frequency_ratio, na.rm = TRUE),
+    sd_ratio = sd(allele_frequency_ratio, na.rm = TRUE),
+    min_ratio = min(allele_frequency_ratio, na.rm = TRUE),
+    max_ratio = max(allele_frequency_ratio, na.rm = TRUE)
+  )
+
+# Print the statistics
+print("Statistics for allele frequency ratios:")
+print(allele_freq_stats)
+
+# Calculate the number of genes where the ratio is >= 1
+ratio_gte_1_count <- filtered_df %>%
+  filter(allele_frequency_ratio >= 1) %>%
+  summarise(n_distinct(Gene)) %>%
+  pull()
+
+# Print the count of genes where the ratio is >= 1
+print(paste("Number of genes with an allele frequency ratio >= 1:", ratio_gte_1_count))
+
+# Visualization: Histogram of allele frequency ratios
+hist_plot <- ggplot(filtered_df, aes(x = allele_frequency_ratio)) +
+  geom_histogram(binwidth = 0.1, fill = "grey20", color = "black") +
+  scale_x_log10() + # Log scale for better visualization
+  labs(title = "Histogram of Allele Frequency Ratios",
+       x = "Allele Frequency Ratio (Log Scale)",
+       y = "Count") +
+  theme_minimal()
+
+# Save the histogram plot
+ggsave("allele_frequency_ratio_histogram.png", hist_plot)
+
+# Show the plot
+print(hist_plot)
+
+# Plot significant genes based on raw p-value
+plot_significant_fisher <- ggplot(significant_fisher, aes(x = reorder(Gene, -p_value), y = -log10(p_value))) +
+  geom_bar(stat = "identity", fill = "blue") +
+  coord_flip() +
+  labs(title = "Significant Genes based on Raw p-value",
+       x = "Gene",
+       y = "-log10(p-value)") +
+  theme_minimal()
+
+# Plot significant genes based on Bonferroni corrected p-value
+plot_significant_bonferroni <- ggplot(significant_bonferroni, aes(x = reorder(Gene, -bonferroni_corrected_p), y = -log10(bonferroni_corrected_p))) +
+  geom_bar(stat = "identity", fill = "red") +
+  coord_flip() +
+  labs(title = "Significant Genes based on Bonferroni Corrected p-value",
+       x = "Gene",
+       y = "-log10(Bonferroni Corrected p-value)") +
+  theme_minimal()
+
+# Plot significant genes based on FDR corrected p-value
+plot_significant_fdr <- ggplot(significant_fdr, aes(x = reorder(Gene, -fdr_corrected_p), y = -log10(fdr_corrected_p))) +
+  geom_bar(stat = "identity", fill = "green") +
+  coord_flip() +
+  labs(title = "Significant Genes based on FDR Corrected p-value",
+       x = "Gene",
+       y = "-log10(FDR Corrected p-value)") +
+  theme_minimal()
+
+# Print the plots
+print(plot_significant_fisher)
+print(plot_significant_bonferroni)
+print(plot_significant_fdr)
+
+# Calculate the number of genes with a positive allele frequency ratio
+positive_ratio_count <- filtered_df %>%
+  filter(allele_frequency_ratio > 0) %>%
+  summarise(n_distinct(Gene)) %>%
+  pull()
+
+# Print the count of genes with a positive ratio
+print(paste("Number of genes with a positive allele frequency ratio:", positive_ratio_count))
+
+
+# Calculate the number of genes where the ratio is >= 1
+ratio_gte_1_count <- filtered_df %>%
+  filter(allele_frequency_ratio >= 1) %>%
+  summarise(n_distinct(Gene)) %>%
+  pull()
+
+# Print the count of genes where the ratio is >= 1
+print(paste("Number of genes with an allele frequency ratio >= 1:", ratio_gte_1_count))
+
+# Group data by Gene and Base to get unique base counts
+unique_base_counts <- df %>%
+  group_by(Gene, Base) %>%
+  summarise(Frequency_Acadian = sum(Frequency_Acadian)) %>%
+  ungroup() %>%
+  group_by(Gene) %>%
+  summarise(Frequency_Acadian = sum(Frequency_Acadian)) %>%
+  arrange(Frequency_Acadian)
+
+# Visualize unique base counts per gene
+plot_unique_base_counts <- ggplot(unique_base_counts, aes(x = reorder(Gene, -Frequency_Acadian), y = Frequency_Acadian, fill = Frequency_Acadian)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  scale_fill_gradient(low = "grey80", high = "black") +
+  labs(title = "Gene Frequency Considering Unique Base Values",
+       x = "Gene",
+       y = "Frequency (Acadian)") +
+  theme_minimal() +
+  theme(
+    legend.position = "none", # Remove legend
+    axis.title.y = element_blank(), # Remove y-axis title
+    plot.margin = unit(c(0.5, 0.5, 0.5, 0.5), "cm"), # Adjust plot margin
+    plot.title = element_text(hjust = 0.5), # Center title
+    axis.text.y = element_text(hjust = 1, vjust = 0.5, margin = margin(r = -20)), # Remove the gap completely
+    axis.ticks.length.y = unit(0, "cm"), # Remove y-axis tick lengths
+    axis.ticks.y = element_blank(), # Remove y-axis ticks
+    axis.line.y = element_blank(), # Remove y-axis line
+    panel.grid.major.y = element_blank(), # Remove y-axis grid lines
+    panel.grid.minor.y = element_blank() # Remove y-axis minor grid lines
+  ) +
+  theme(plot.margin = unit(c(1, -1, 1, 1), "lines"))
+
+# Save the plot as an image
+ggsave("unique_base_counts_plot_greyscale_ordered_reversed_no_gap.png", plot_unique_base_counts)
+
+# Print the data with unique base counts
+print("Data with unique base counts:")
+print(unique_base_counts)
+
+# Print the unique base counts plot
+print(plot_unique_base_counts)
+
+# Group data by Gene and Base to get unique base counts
+unique_base_counts <- df %>%
+  group_by(Gene, Base) %>%
+  summarise(Frequency_Acadian = sum(Frequency_Acadian)) %>%
+  ungroup() %>%
+  group_by(Gene) %>%
+  summarise(Frequency_Acadian = sum(Frequency_Acadian)) %>%
+  filter(Frequency_Acadian > 1) %>% # Exclude genes with a count of 1
+  arrange(Frequency_Acadian)
+
+# Visualize unique base counts per gene
+plot_unique_base_counts <- ggplot(unique_base_counts, aes(x = reorder(Gene, -Frequency_Acadian), y = Frequency_Acadian, fill = Frequency_Acadian)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  scale_fill_gradient(low = "grey80", high = "black") +
+  labs(title = "Gene Frequency Considering Unique Base Values",
+       x = "Gene",
+       y = "Frequency (Acadian)") +
+  theme_minimal() +
+  theme(
+    legend.position = "none", # Remove legend
+    axis.title.y = element_blank(), # Remove y-axis title
+    plot.margin = unit(c(1, 1, 1, 1.5), "cm"), # Adjust plot margin to give more space for gene names
+    plot.title = element_text(hjust = 0.5), # Center title
+    axis.text.y = element_text(hjust = 1, vjust = 0.5, margin = margin(r = 10)), # Adjust margin to give more space for gene names
+    axis.ticks.length.y = unit(0, "cm"), # Remove y-axis tick lengths
+    axis.ticks.y = element_blank(), # Remove y-axis ticks
+    axis.line.y = element_blank(), # Remove y-axis line
+    panel.grid.major.y = element_blank(), # Remove y-axis grid lines
+    panel.grid.minor.y = element_blank() # Remove y-axis minor grid lines
+  ) +
+  theme(panel.border = element_rect(colour = "black", fill = NA, size = 1))
+
+# Adjust height for better readability
+ggsave("unique_base_counts_plot_greyscale_ordered_reversed_no_gap_with_border_adjusted.png", plot_unique_base_counts, height = 10, width = 8)
+
+# Print the data with unique base counts
+print("Data with unique base counts:")
+print(unique_base_counts)
+
+# Print the unique base counts plot
+print(plot_unique_base_counts)
+
